@@ -1,0 +1,27 @@
+# 사용자 거래 데이터
+data/
+evaluation_data/
+
+# Python 캐시 및 가상환경
+__pycache__/
+*.py[cod]
+.venv/
+
+# 테스트·검증 임시 파일
+.test-data-*/
+.test-cli-*/
+.verification-*/
+
+# 내보내기 결과
+evaluation_result.csv
+july.csv
+range.csv
+
+# 운영체제 및 편집기 임시 파일
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# 과제 원본 PDF
+미션 - AI_SW 기초 (AI_SW Basic).pdf
