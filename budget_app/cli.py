@@ -6,16 +6,45 @@ import argparse
 import csv
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence, TypeVar
 
 from .decorators import log_execution
-from .models import AppError, SearchCriteria
+from .models import (
+    AppError,
+    SearchCriteria,
+    validate_amount,
+    validate_date,
+    validate_type,
+)
 from .repositories import BudgetStore, CategoryStore, TransactionRepository
 from .services import BudgetService
 
+T = TypeVar("T")
+
+
+class FriendlyArgumentParser(argparse.ArgumentParser):
+    """명령 문법 오류를 과제 형식의 오류와 힌트로 출력한다."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        print(
+            f"[오류] 명령어 또는 옵션이 올바르지 않습니다: {message}",
+            file=sys.stderr,
+        )
+        print(
+            "[힌트] 명령에는 하이픈을 붙이지 않습니다. "
+            "예: python -m budget_app add",
+            file=sys.stderr,
+        )
+        print(
+            "[힌트] 전체 사용법: python -m budget_app --help",
+            file=sys.stderr,
+        )
+        self.exit(2)
+
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = FriendlyArgumentParser(
         prog="python -m budget_app",
         description="JSONL 파일 기반 용돈 기입장",
     )
@@ -105,17 +134,60 @@ def format_transaction(item: object) -> str:
     )
 
 
+def prompt_validated(prompt: str, validator: Callable[[str], T]) -> T:
+    """대화형 입력이 유효할 때까지 오류와 힌트를 출력하며 다시 묻는다."""
+    while True:
+        try:
+            return validator(input(prompt).strip())
+        except AppError as exc:
+            print(f"[오류] {exc.message}", file=sys.stderr)
+            if exc.hint:
+                print(f"[힌트] {exc.hint}", file=sys.stderr)
+            print("[안내] 다시 입력해 주세요.", file=sys.stderr)
+        except EOFError as exc:
+            raise AppError(
+                "입력이 끝나 거래 추가를 완료할 수 없습니다.",
+                "대화형 터미널에서 다시 실행하세요.",
+            ) from exc
+
+
+def prompt_text(prompt: str) -> str:
+    try:
+        return input(prompt).strip()
+    except EOFError as exc:
+        raise AppError(
+            "입력이 끝나 거래 추가를 완료할 수 없습니다.",
+            "대화형 터미널에서 다시 실행하세요.",
+        ) from exc
+
+
+def validate_category_input(service: BudgetService, value: str) -> str:
+    if not service.categories.exists(value):
+        raise AppError(
+            f"등록되지 않은 카테고리입니다: {value}",
+            "category list로 목록을 확인하거나 category add로 먼저 등록하세요.",
+        )
+    return value
+
+
 @log_execution
 def dispatch(args: argparse.Namespace, service: BudgetService) -> None:
     command = args.command
     if command == "add":
         item = service.add_transaction(
-            date_value=input("날짜 (YYYY-MM-DD): ").strip(),
-            transaction_type=input("타입 (income/expense): ").strip(),
-            category=input("카테고리: ").strip(),
-            amount=input("금액 (양수 정수): ").strip(),
-            memo=input("메모 (선택): ").strip(),
-            tags=input("태그 (쉼표 구분, 선택): ").strip(),
+            date_value=prompt_validated(
+                "날짜 (YYYY-MM-DD): ", validate_date
+            ),
+            transaction_type=prompt_validated(
+                "타입 (income/expense): ", validate_type
+            ),
+            category=prompt_validated(
+                "카테고리: ",
+                lambda value: validate_category_input(service, value),
+            ),
+            amount=prompt_validated("금액 (양수 정수): ", validate_amount),
+            memo=prompt_text("메모 (선택): "),
+            tags=prompt_text("태그 (쉼표 구분, 선택): "),
         )
         print(f"[저장 완료] id={item.id}")
     elif command == "list":

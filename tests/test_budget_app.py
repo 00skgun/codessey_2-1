@@ -114,34 +114,77 @@ class BudgetServiceTest(unittest.TestCase):
 
 
 class CliTest(unittest.TestCase):
+    def run_cli(
+        self, arguments: list[str], *, user_input: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        environment = os.environ.copy()
+        environment["PYTHONUTF8"] = "1"
+        return subprocess.run(
+            [sys.executable, "-m", "budget_app", *arguments],
+            input=user_input,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            env=environment,
+            check=False,
+        )
+
     def test_error_has_nonzero_exit_code_without_traceback(self) -> None:
         temp = Path.cwd() / f".test-cli-{uuid.uuid4().hex}"
         temp.mkdir()
         try:
-            environment = os.environ.copy()
-            environment["PYTHONUTF8"] = "1"
-            result = subprocess.run(
+            result = self.run_cli(
                 [
-                    sys.executable,
-                    "-m",
-                    "budget_app",
                     "--data-dir",
                     str(temp),
                     "delete",
                     "--id",
                     "NO-ID",
                 ],
-                text=True,
-                capture_output=True,
-                encoding="utf-8",
-                env=environment,
-                check=False,
             )
         finally:
             shutil.rmtree(temp, ignore_errors=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("[오류]", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_invalid_command_prints_hint_and_exit_code_two(self) -> None:
+        result = self.run_cli(["-add"])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("[오류]", result.stderr)
+        self.assertIn("python -m budget_app add", result.stderr)
+        self.assertIn("python -m budget_app --help", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_interactive_add_reprompts_invalid_values(self) -> None:
+        temp = Path.cwd() / f".test-cli-{uuid.uuid4().hex}"
+        temp.mkdir()
+        try:
+            result = self.run_cli(
+                ["--data-dir", str(temp), "add"],
+                user_input=(
+                    "2026-13-40\n"
+                    "2026-07-29\n"
+                    "wrong\n"
+                    "expense\n"
+                    "unknown\n"
+                    "food\n"
+                    "0\n"
+                    "15000\n"
+                    "점심\n"
+                    "meal\n"
+                ),
+            )
+            stored = list(
+                TransactionRepository(temp / "transactions.jsonl").iter_all()
+            )
+        finally:
+            shutil.rmtree(temp, ignore_errors=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].amount, 15000)
+        self.assertGreaterEqual(result.stderr.count("[안내] 다시 입력해 주세요."), 4)
+        self.assertIn("[저장 완료]", result.stdout)
 
 
 if __name__ == "__main__":
